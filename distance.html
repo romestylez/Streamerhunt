@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>romestylez Streamer Hunt - Distance</title>
+<link rel="icon" href="favicon.ico">
+
+<style>
+  html, body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    background: transparent;
+    overflow: hidden;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  #distance {
+    font-size: 80px;
+    font-weight: bold;
+    color: #00FF00;
+    text-shadow: 0 0 15px #000;
+    font-family: Arial, sans-serif;
+    white-space: nowrap;
+    transition: color 0.3s, text-shadow 0.3s;
+  }
+
+  @keyframes pulseRed {
+    0% { text-shadow: 0 0 10px red; }
+    50% { text-shadow: 0 0 35px red; }
+    100% { text-shadow: 0 0 10px red; }
+  }
+</style>
+</head>
+<body>
+
+<div id="distance">🎯 -- m</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@rtirl/api@latest/lib/index.min.js"></script>
+
+<script>
+let config;
+let runnerPos = null;
+let hunterPos = null;
+
+function loadConfig() {
+  return fetch("api.php?action=config").then(r => r.json());
+}
+
+function distanceMeters(a, b) {
+  const R = 6371000;
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+
+  const c =
+    Math.sin(dLat/2) ** 2 +
+    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) *
+    Math.sin(dLng/2) ** 2;
+
+  return R * (2 * Math.atan2(Math.sqrt(c), Math.sqrt(1 - c)));
+}
+
+// ⭐ Neue Version: holt Distanz über deine eigene API (Proxy)
+async function getWalkingDistance(a, b) {
+  const r = await fetch(
+    "api.php?action=distance" +
+    "&origin=" + a.lat + "," + a.lng +
+    "&destination=" + b.lat + "," + b.lng +
+    "&_=" + Date.now()
+  );
+
+  const j = await r.json();
+
+  // Game paused → nichts anzeigen
+  if (j.paused) return null;
+
+  // API liefert echte Google-Distanz
+  if (j.distance !== null) return j.distance;
+
+  // Fallback: Luftlinie
+  return distanceMeters(a, b);
+}
+
+async function updateDistance() {
+  const box = document.getElementById("distance");
+
+  if (!runnerPos || !hunterPos) {
+    box.textContent = "🎯 -- m";
+    box.style.color = "#00FF00";
+    box.style.animation = "none";
+    return;
+  }
+
+  const dist = await getWalkingDistance(runnerPos, hunterPos);
+
+  // Wenn Game paused → nix anzeigen
+  if (dist === null) {
+    box.textContent = "🎯 -- m";
+    box.style.color = "#00FF00";
+    box.style.animation = "none";
+    return;
+  }
+
+  box.textContent = "🎯 " + Math.round(dist) + " m";
+
+  if (dist > 2000) {
+    box.style.color = "#00FF00";
+    box.style.animation = "none";
+  } else if (dist > 300) {
+    box.style.color = "#FFD700";
+    box.style.animation = "none";
+  } else {
+    box.style.color = "#FF0000";
+    box.style.animation = "pulseRed 1s infinite";
+  }
+}
+
+loadConfig().then(cfg => {
+  config = cfg;
+
+  const runnerRT = RealtimeIRL.forStreamer("twitch", config.runner_id);
+  const hunterRT = RealtimeIRL.forStreamer("twitch", config.hunter_id);
+
+  let lastTime = 0;
+  const UPDATE_MS = 800;
+
+  function queueUpdate() {
+    const now = Date.now();
+    if (now - lastTime >= UPDATE_MS) {
+      lastTime = now;
+      updateDistance();
+    }
+  }
+
+  runnerRT.addLocationListener(l => {
+    runnerPos = config.runner_fixed_position
+      ? { lat: config.lat, lng: config.lng }
+      : { lat: l.latitude, lng: l.longitude };
+
+    queueUpdate();
+  });
+
+  hunterRT.addLocationListener(l => {
+    hunterPos = { lat: l.latitude, lng: l.longitude };
+    queueUpdate();
+  });
+});
+</script>
+
+</body>
+</html>

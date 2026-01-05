@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>romestylez Streamer Hunt</title>
+<link rel="icon" href="favicon.ico">
+
+<style>
+  html, body, #map {
+    width: 100%; height: 100%;
+    margin: 0;
+    background: transparent;
+  }
+
+  #caught-alert {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0,0,0,0.85);
+    padding: 20px 40px;
+    border: 3px solid red;
+    border-radius: 12px;
+    font-size: 42px;
+    font-weight: bold;
+    color: red;
+    text-shadow: 0 0 10px red;
+    display: none;
+    z-index: 2000;
+    animation: pulse 0.7s infinite;
+  }
+
+  @keyframes pulse {
+    0% { transform: translate(-50%, -50%) scale(1); }
+    50% { transform: translate(-50%, -50%) scale(1.1); }
+    100% { transform: translate(-50%, -50%) scale(1); }
+  }
+
+  #distance-box {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    background: rgba(0,0,0,0.6);
+    padding: 10px 16px;
+    color: #00FF00;
+    font-size: 20px;
+    font-weight: bold;
+    border-radius: 8px;
+    z-index: 3000;
+  }
+
+  #paused-overlay {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0,0,0,0.7);
+    padding: 20px 50px;
+    font-size: 42px;
+    font-weight: bold;
+    border-radius: 12px;
+    color: #fff;
+    display: none;
+    z-index: 2500;
+  }
+</style>
+</head>
+<body>
+
+<div id="caught-alert">CAUGHT!</div>
+<div id="distance-box">Distance: -- m</div>
+<div id="paused-overlay">GAME PAUSED</div>
+<div id="map"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@rtirl/api@latest/lib/index.min.js"></script>
+<script>
+let config;
+let map;
+
+let runnerMarker, hunterMarker;
+let runnerPos = null;
+let hunterPos = null;
+let gameStatus = "running";
+let caughtTriggered = false;
+
+function getParam(name, defaultValue) {
+  const url = new URL(window.location.href);
+  return url.searchParams.get(name) ?? defaultValue;
+}
+
+function pollGameState() {
+  fetch("api.php?action=state&_=" + Date.now())
+    .then(r => r.json())
+    .then(s => {
+      gameStatus = s.status;
+      updateUIForState();
+    });
+}
+setInterval(pollGameState, 2000);
+pollGameState();
+
+function updateUIForState() {
+  const pauseOverlay = document.getElementById("paused-overlay");
+  const distBox = document.getElementById("distance-box");
+  const caught = document.getElementById("caught-alert");
+
+  if (gameStatus === "paused") {
+    pauseOverlay.style.display = "block";
+    distBox.style.display = "none";
+    caught.style.display = "none";
+    caughtTriggered = false;
+    if (runnerMarker) runnerMarker.setMap(null);
+    if (hunterMarker) hunterMarker.setMap(null);
+  } else {
+    pauseOverlay.style.display = "none";
+    distBox.style.display = "block";
+    if (runnerMarker) runnerMarker.setMap(map);
+    if (hunterMarker) hunterMarker.setMap(map);
+  }
+}
+
+function loadConfig() {
+  return fetch("api.php?action=config")
+    .then(r => r.json());
+}
+
+function addDarkStyles() {
+  map.setOptions({
+    styles: [
+      { stylers: [{ saturation: -100 }, { lightness: -30 }] },
+      { featureType: "road", elementType: "geometry", stylers: [{ lightness: -70 }] },
+      { elementType: "labels", stylers: [{ visibility: "off" }] }
+    ]
+  });
+}
+
+function initOverlay() {
+  loadConfig().then(cfg => {
+    config = cfg;
+
+    const script = document.createElement("script");
+    script.src =
+      "https://maps.googleapis.com/maps/api/js?key=" +
+      cfg.google_maps_key +
+      "&callback=initMap";
+    script.async = true;
+    document.head.appendChild(script);
+  });
+}
+
+
+function initMap() {
+  const disableUI = getParam("disableUI", "false") === "true";
+  const scrollOff = getParam("scrollWheel", "true") === "false";
+
+  map = new google.maps.Map(document.getElementById("map"), {
+  zoom: config.zoom,
+  center: { lat: config.lat, lng: config.lng },
+  disableDefaultUI: disableUI,
+  zoomControl: !disableUI,
+  streetViewControl: false,
+  scrollwheel: !scrollOff,
+  draggable: !scrollOff,
+  mapTypeControl: !disableUI,
+  mapTypeControlOptions: {
+    position: google.maps.ControlPosition.RIGHT_TOP
+  },
+  fullscreenControl: !disableUI,
+  fullscreenControlOptions: {
+    position: google.maps.ControlPosition.RIGHT_TOP
+  }
+});
+
+
+  addDarkStyles();
+  initMarkers();
+
+  if (config.runner_fixed_position) {
+    runnerPos = { lat: config.lat, lng: config.lng };
+    runnerMarker.setPosition(runnerPos);
+  }
+
+  trackPlayers();
+}
+
+function initMarkers() {
+  hunterMarker = new google.maps.Marker({
+    map,
+    icon: {
+      path: google.maps.SymbolPath.CIRCLE,
+      scale: 6,
+      fillColor: "#00FF00",
+      fillOpacity: 1,
+      strokeWeight: 1
+    }
+  });
+
+  runnerMarker = new google.maps.Marker({
+    map,
+    icon: {
+      path: "M -10,0 L 10,0 M 0,-10 L 0,10 M -8,0 A 8 8 0 1 0 8,0 A 8 8 0 1 0 -8,0",
+      strokeColor: "#FF0000",
+      strokeOpacity: 1,
+      strokeWeight: 2.5,
+      scale: 1.3,
+      anchor: new google.maps.Point(0, 0)
+    }
+  });
+}
+
+function distanceMeters(a, b) {
+  const R = 6371000;
+  const toRad = d => d*Math.PI/180;
+  const dLat = toRad(b.lat-a.lat);
+  const dLng = toRad(b.lng-a.lng);
+  const c = Math.sin(dLat/2)**2 +
+        Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat)) *
+        Math.sin(dLng/2)**2;
+  return R * (2 * Math.atan2(Math.sqrt(c), Math.sqrt(1-c)));
+}
+
+async function getWalkingDistance(a, b) {
+  const r = await fetch(
+    "api.php?action=distance" +
+    "&origin=" + a.lat + "," + a.lng +
+    "&destination=" + b.lat + "," + b.lng +
+    "&_=" + Date.now()
+  );
+
+  const j = await r.json();
+
+  // Game paused → keine Distanz
+  if (j.paused) return null;
+
+  // echte Walking Distance vom Server
+  if (j.distance !== null) return j.distance;
+
+  // Fallback: Luftlinie
+  return distanceMeters(a, b);
+}
+
+function updateMarkerSize() {
+  if (!map || !hunterMarker || !runnerMarker) return;
+  const zoom = map.getZoom();
+
+  let hunterScale = 6 + (zoom - 14) * 0.8;
+  let runnerScale = 1.3 + (zoom - 14) * 0.1;
+
+  hunterScale = Math.min(Math.max(hunterScale, 6), 12);
+  runnerScale = Math.min(Math.max(runnerScale, 1.3), 2.5);
+
+  if (zoom < 14) {
+    hunterScale = 6;
+    runnerScale = 1.3;
+  }
+
+  hunterMarker.setIcon({
+    path: google.maps.SymbolPath.CIRCLE,
+    scale: hunterScale,
+    fillColor: "#00FF00",
+    fillOpacity: 1,
+    strokeWeight: 1
+  });
+
+  runnerMarker.setIcon({
+    path: "M -10,0 L 10,0 M 0,-10 L 0,10 M -8,0 A 8 8 0 1 0 8,0 A 8 8 0 1 0 -8,0",
+    strokeColor: "#FF0000",
+    strokeOpacity: 1,
+    strokeWeight: 2.5,
+    scale: runnerScale,
+    anchor: new google.maps.Point(0, 0)
+  });
+}
+
+function updateCamera() {
+  if (!hunterPos || !runnerPos || gameStatus === "paused") return;
+
+  const dist = distanceMeters(runnerPos, hunterPos);
+
+  let zoom;
+  if (dist > 6000) zoom = 13;
+  else if (dist > 3200) zoom = 14.5;
+  else if (dist > 1500) zoom = 16.0;
+  else if (dist > 1000) zoom = 16.5;
+  else if (dist > 600) zoom = 17.0;
+  else if (dist > 350) zoom = 17.0;
+  else zoom = 17.0; // 🧨 Finale: maximaler Zoom
+
+  const center = {
+    lat: (hunterPos.lat + runnerPos.lat) / 2,
+    lng: (hunterPos.lng + runnerPos.lng) / 2
+  };
+
+  map.setCenter(center);
+  map.setZoom(zoom);
+  updateMarkerSize();
+}
+
+let lastDistanceUpdate = 0;
+async function updateDistance() {
+  const now = Date.now();
+  if (now - lastDistanceUpdate < 2000) return;
+  lastDistanceUpdate = now;
+
+  const box = document.getElementById("distance-box");
+  if (!runnerPos || !hunterPos || gameStatus !== "running") {
+    box.style.display = "none";
+    return;
+  }
+
+  const dist = await getWalkingDistance(runnerPos, hunterPos);
+
+  box.textContent = "Distance: " + Math.round(dist) + " m";
+
+  if (dist > 2000) box.style.color = "#00FF00";
+  else if (dist > 800) box.style.color = "#FFD700";
+  else box.style.color = "#FF0000";
+}
+
+function checkCatch(alert) {
+  if (gameStatus !== "running") return;
+  if (!runnerPos || !hunterPos || caughtTriggered) return;
+
+  getWalkingDistance(runnerPos, hunterPos).then(dist => {
+    if (dist <= config.catch_meter) {
+      caughtTriggered = true;
+      alert.style.display = "block";
+      document.getElementById("distance-box").style.display = "none";
+    }
+  });
+}
+
+function trackPlayers() {
+  const runnerRT = RealtimeIRL.forStreamer("twitch", config.runner_id);
+  const hunterRT = RealtimeIRL.forStreamer("twitch", config.hunter_id);
+  const alert = document.getElementById("caught-alert");
+
+  runnerRT.addLocationListener(l => {
+    if (!config.runner_fixed_position && gameStatus === "running") {
+      runnerPos = { lat: l.latitude, lng: l.longitude };
+      runnerMarker.setPosition(runnerPos);
+    }
+    updateDistance();
+    checkCatch(alert);
+  });
+
+  hunterRT.addLocationListener(l => {
+    if (gameStatus === "running") {
+      hunterPos = { lat: l.latitude, lng: l.longitude };
+      hunterMarker.setPosition(hunterPos);
+      updateCamera();
+    }
+    updateDistance();
+    checkCatch(alert);
+  });
+}
+
+initOverlay();
+</script>
+</body>
+</html>
