@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>romestylez Streamer Hunt - Distance</title>
+<title>smtxLOST Streamer Hunt - Distance</title>
 <link rel="icon" href="favicon.ico">
 
 <style>
@@ -44,6 +44,8 @@
 let config;
 let runnerPos = null;
 let hunterPos = null;
+let distanceRequestRunning = false;
+let distanceUpdateQueued = false;
 
 function loadConfig() {
   return fetch("api.php?action=config").then(r => r.json());
@@ -85,38 +87,55 @@ async function getWalkingDistance(a, b) {
 }
 
 async function updateDistance() {
+  if (distanceRequestRunning) {
+    distanceUpdateQueued = true;
+    return;
+  }
+
+  distanceRequestRunning = true;
+
   const box = document.getElementById("distance");
 
   if (!runnerPos || !hunterPos) {
     box.textContent = "🎯 -- m";
     box.style.color = "#00FF00";
     box.style.animation = "none";
+    distanceRequestRunning = false;
     return;
   }
 
-  const dist = await getWalkingDistance(runnerPos, hunterPos);
+  try {
+    const dist = await getWalkingDistance(runnerPos, hunterPos);
 
-  // Wenn Game paused → nix anzeigen
-  if (dist === null) {
-    box.textContent = "🎯 -- m";
-    box.style.color = "#00FF00";
-    box.style.animation = "none";
-    return;
-  }
+    if (dist === null) {
+      box.textContent = "🎯 -- m";
+      box.style.color = "#00FF00";
+      box.style.animation = "none";
+    } else {
+      box.textContent = "🎯 " + Math.round(dist) + " m";
 
-  box.textContent = "🎯 " + Math.round(dist) + " m";
+      if (dist > 2000) {
+        box.style.color = "#00FF00";
+        box.style.animation = "none";
+      } else if (dist > 300) {
+        box.style.color = "#FFD700";
+        box.style.animation = "none";
+      } else {
+        box.style.color = "#FF0000";
+        box.style.animation = "pulseRed 1s infinite";
+      }
+    }
 
-  if (dist > 2000) {
-    box.style.color = "#00FF00";
-    box.style.animation = "none";
-  } else if (dist > 300) {
-    box.style.color = "#FFD700";
-    box.style.animation = "none";
-  } else {
-    box.style.color = "#FF0000";
-    box.style.animation = "pulseRed 1s infinite";
+  } finally {
+    distanceRequestRunning = false;
+
+    if (distanceUpdateQueued) {
+      distanceUpdateQueued = false;
+      updateDistance();
+    }
   }
 }
+
 
 loadConfig().then(cfg => {
   config = cfg;
