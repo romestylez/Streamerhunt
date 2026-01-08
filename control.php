@@ -1,16 +1,13 @@
 <?php
-$basePath = __DIR__;
+$securePath = realpath(__DIR__ . "/../../secure/streamer-hunt");
 
-$configFile = $basePath . "/config.php";
-$stateFile  = $basePath . "/game_state.json";
+$configFile = $securePath . "/config.php";
+$stateFile  = $securePath . "/game_state.json";
 
-// ✅ Config sicher als PHP einbinden
 $config = include $configFile;
 
-// ✅ State bleibt JSON
 $state  = json_decode(file_get_contents($stateFile), true);
 
-// ✅ Handle POST actions
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
     if (isset($_POST["save_settings"])) {
@@ -23,8 +20,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         $config["lat"] = floatval($_POST["lat"]);
         $config["lng"] = floatval($_POST["lng"]);
         $config["catch_meter"] = intval($_POST["catch_meter"]);
-
-        file_put_contents(
+		$config["round_minutes"] = intval($_POST["round_minutes"]);
+        
+		file_put_contents(
             $configFile,
             "<?php\nreturn " . var_export($config, true) . ";\n"
         );
@@ -39,10 +37,11 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     }
 
     if (isset($_POST["start_game"])) {
-        $state["status"] = "running";
-        file_put_contents($stateFile, json_encode($state, JSON_PRETTY_PRINT));
-        exit(json_encode(["success" => true, "msg" => "running"]));
-    }
+    $state["status"] = "running";
+    $state["round_start"] = time();
+    file_put_contents($stateFile, json_encode($state, JSON_PRETTY_PRINT));
+    exit(json_encode(["success" => true, "msg" => "running"]));
+}
 }
 
 $currentStatus = $state["status"];
@@ -117,7 +116,7 @@ button:hover { background-color: #444; }
   </span>
 </div>
 
-<p id="msg-box" style="font-weight:bold;"></p>
+
 
 <form id="controlForm" method="POST">
 
@@ -132,6 +131,12 @@ button:hover { background-color: #444; }
     <option value="0" <?= !$config["runner_fixed_position"] ? "selected" : "" ?>>Streamer Hunt (Live GPS)</option>
     <option value="1" <?= $config["runner_fixed_position"] ? "selected" : "" ?>>Excursion (Fixed Goal)</option>
 </select>
+
+<label>Round Timer (Minutes):</label>
+<input type="number" name="round_minutes" min="1" max="300"
+       value="<?= $config['round_minutes'] ?? 30 ?>">
+<small>Countdown starts when game is running</small>
+
 
 <label>Search Address:</label>
 <input type="text" id="addressInput" placeholder="Enter address...">
@@ -208,7 +213,7 @@ function showMessage(msg) {
     setTimeout(() => box.innerText = "", 2500);
 }
 
-// ✅ AJAX Start/Pause Button
+// AJAX Start/Pause Button
 function sendAction(action) {
     fetch("", {
         method: "POST",
@@ -227,7 +232,7 @@ document.getElementById("startPauseBtn").addEventListener("click", () => {
     sendAction(status === "running" ? "pause_game" : "start_game");
 });
 
-// ✅ AJAX Save Settings
+// AJAX Save Settings
 function saveSettings() {
     const formData = new FormData(document.getElementById("controlForm"));
     formData.append("save_settings", "1");
@@ -240,7 +245,8 @@ function saveSettings() {
     .then(j => showMessage("✅ Settings saved"));
 }
 
-// ✅ Live Status Refresh
+
+// Live Status Refresh
 function refreshStatusBox() {
     fetch("api.php?action=state&_=" + Date.now())
       .then(r => r.json())
