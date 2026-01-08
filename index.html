@@ -2,65 +2,78 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>smtxLOST Streamer Hunt by romestylez</title>
+<title>smtxLOST Streamer Hunt</title>
 <link rel="icon" href="favicon.ico">
 
 <style>
   html, body, #map {
-    width: 100%; height: 100%;
-    margin: 0;
-    background: transparent;
-  }
+  width: 100%; height: 100%;
+  margin: 0;
+  background: transparent;
+}
 
   #caught-alert {
-    position: absolute;
-    top: 50%; left: 50%;
-    transform: translate(-50%, -50%);
-    background: rgba(0,0,0,0.85);
-    padding: 20px 40px;
-    border: 3px solid red;
-    border-radius: 12px;
-    font-size: 42px;
-    font-weight: bold;
-    color: red;
-    text-shadow: 0 0 10px red;
-    display: none;
-    z-index: 2000;
-    animation: pulse 0.7s infinite;
-  }
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0,0,0,0.85);
+  padding: 20px 40px;
+  border: 3px solid red;
+  border-radius: 12px;
+  font-size: 42px;
+  font-weight: bold;
+  color: red;
+  text-shadow: 0 0 10px red;
+  display: none;
+  z-index: 2000;
+  animation: pulse 0.7s infinite;
+}
 
   @keyframes pulse {
-    0% { transform: translate(-50%, -50%) scale(1); }
-    50% { transform: translate(-50%, -50%) scale(1.1); }
-    100% { transform: translate(-50%, -50%) scale(1); }
-  }
+  0% { transform: translate(-50%, -50%) scale(1); }
+  50% { transform: translate(-50%, -50%) scale(1.1); }
+  100% { transform: translate(-50%, -50%) scale(1); }
+}
 
   #distance-box {
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    background: rgba(0,0,0,0.6);
-    padding: 10px 16px;
-    color: #00FF00;
-    font-size: 20px;
-    font-weight: bold;
-    border-radius: 8px;
-    z-index: 3000;
-  }
+  position: absolute;
+  top: 55px;
+  left: 10px;
+  background: rgba(0,0,0,0.6);
+  padding: 10px 16px;
+  color: #00FF00;
+  font-size: 20px;
+  font-weight: bold;
+  border-radius: 8px;
+  z-index: 3000;
+}
+  
+  #timer-box {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: rgba(0,0,0,0.6);
+  padding: 8px 16px;
+  color: #00FF00;
+  font-size: 18px;
+  font-weight: bold;
+  border-radius: 8px;
+  z-index: 3000;
+}
 
   #paused-overlay {
-    position: absolute;
-    top: 50%; left: 50%;
-    transform: translate(-50%, -50%);
-    background: rgba(0,0,0,0.7);
-    padding: 20px 50px;
-    font-size: 42px;
-    font-weight: bold;
-    border-radius: 12px;
-    color: #fff;
-    display: none;
-    z-index: 2500;
-  }
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0,0,0,0.7);
+  padding: 20px 50px;
+  font-size: 42px;
+  font-weight: bold;
+  border-radius: 12px;
+  color: #fff;
+  display: none;
+   z-index: 2500;
+}
   
 #footer {
   position: absolute;
@@ -80,6 +93,7 @@
 <body>
 
 <div id="caught-alert">CAUGHT!</div>
+<div id="timer-box">Time left: --:--</div>
 <div id="distance-box">Distance: -- m</div>
 <div id="paused-overlay">GAME PAUSED</div>
 <div id="map"></div>
@@ -107,16 +121,21 @@ let runnerPos = null;
 let hunterPos = null;
 let gameStatus = "running";
 let caughtTriggered = false;
+let timerStopped = false;
 let cameraInitialized = false;
+let roundStart = null;
+let roundMinutes = null;
 
 
 function pollGameState() {
   fetch("api.php?action=state&_=" + Date.now())
     .then(r => r.json())
     .then(s => {
-      gameStatus = s.status;
-      updateUIForState();
-    });
+  gameStatus = s.status;
+  roundStart = s.round_start ?? null;
+  updateUIForState();
+});
+
 }
 setInterval(pollGameState, 2000);
 pollGameState();
@@ -131,7 +150,8 @@ function updateUIForState() {
     distBox.style.display = "none";
     caught.style.display = "none";
     caughtTriggered = false;
-	cameraInitialized = false; // ✅ HIER GENAU
+	timerStopped = false;
+	cameraInitialized = false;
     if (runnerMarker) runnerMarker.setMap(null);
     if (hunterMarker) hunterMarker.setMap(null);
     if (geoFenceCircle) geoFenceCircle.setMap(null);
@@ -164,6 +184,7 @@ function addDarkStyles() {
 function initOverlay() {
   loadConfig().then(cfg => {
     config = cfg;
+	roundMinutes = cfg.round_minutes ?? 60;
 
     const script = document.createElement("script");
     script.src =
@@ -444,12 +465,47 @@ function checkCatch(alert) {
 
   getWalkingDistance(runnerPos, hunterPos).then(dist => {
     if (dist <= config.catch_meter) {
-      caughtTriggered = true;
-      alert.style.display = "block";
-      document.getElementById("distance-box").style.display = "none";
-    }
+  caughtTriggered = true;
+  timerStopped = true; // ⏱ TIMER STOPPEN
+  alert.style.display = "block";
+  document.getElementById("distance-box").style.display = "none";
+}
+
   });
 }
+
+function updateTimer() {
+	if (timerStopped) return;
+	const box = document.getElementById("timer-box");
+
+  if (gameStatus !== "running" || !roundStart || !roundMinutes) {
+    box.style.display = "none";
+    return;
+  }
+
+  const total = roundMinutes * 60;
+  const elapsed = Math.floor(Date.now() / 1000) - roundStart;
+  const left = total - elapsed;
+
+  if (left <= 0) {
+    box.textContent = "Time over!";
+    box.style.color = "#FF0000";
+    box.style.display = "block";
+    return;
+  }
+
+  const m = Math.floor(left / 60);
+  const s = left % 60;
+  box.textContent = `Time left: ${m}:${s.toString().padStart(2,"0")}`;
+
+  box.style.color =
+    left > 120 ? "#00FF00" :
+    left > 30  ? "#FFD700" :
+                 "#FF0000";
+
+  box.style.display = "block";
+}
+
 
 function trackPlayers() {
   const runnerRT = RealtimeIRL.forStreamer("twitch", config.runner_id);
@@ -479,6 +535,7 @@ runnerRT.addLocationListener(l => {
 }
 
 initOverlay();
+setInterval(updateTimer, 1000);
 </script>
 <div id="footer">Made with ❤️ by romestylez</div>
 </body>
