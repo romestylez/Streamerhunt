@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>romestylez Streamer Hunt</title>
+<title>smtxLOST Streamer Hunt by romestylez</title>
 <link rel="icon" href="favicon.ico">
 
 <style>
@@ -61,6 +61,20 @@
     display: none;
     z-index: 2500;
   }
+  
+#footer {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 14px;
+  color: rgba(0,0,0,0.6);
+  font-family: Arial, sans-serif;
+  z-index: 4000;
+  pointer-events: none;
+  text-shadow: 0 0 4px #000;
+  font-weight: 600;
+}
 </style>
 </head>
 <body>
@@ -72,19 +86,29 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@rtirl/api@latest/lib/index.min.js"></script>
 <script>
+function getParam(name, defaultValue) {
+  const url = new URL(window.location.href);
+  return url.searchParams.get(name) ?? defaultValue;
+}
+
+const smartZoom = getParam("smartZoom", "false") === "true";
+const miniMapMode = getParam("miniMap", "false") === "true";
+const showDistance = getParam("showDistance", "true") !== "false";
+const autoCamera =
+  getParam("autoCamera", "false") === "true" ||
+  smartZoom ||
+  miniMapMode;
+
 let config;
 let map;
-
+let geoFenceCircle = null;
 let runnerMarker, hunterMarker;
 let runnerPos = null;
 let hunterPos = null;
 let gameStatus = "running";
 let caughtTriggered = false;
+let cameraInitialized = false;
 
-function getParam(name, defaultValue) {
-  const url = new URL(window.location.href);
-  return url.searchParams.get(name) ?? defaultValue;
-}
 
 function pollGameState() {
   fetch("api.php?action=state&_=" + Date.now())
@@ -107,13 +131,18 @@ function updateUIForState() {
     distBox.style.display = "none";
     caught.style.display = "none";
     caughtTriggered = false;
+	cameraInitialized = false; // ✅ HIER GENAU
     if (runnerMarker) runnerMarker.setMap(null);
     if (hunterMarker) hunterMarker.setMap(null);
+    if (geoFenceCircle) geoFenceCircle.setMap(null);
+
   } else {
     pauseOverlay.style.display = "none";
-    distBox.style.display = "block";
+    distBox.style.display = showDistance ? "block" : "none";
+
     if (runnerMarker) runnerMarker.setMap(map);
     if (hunterMarker) hunterMarker.setMap(map);
+    if (geoFenceCircle) geoFenceCircle.setMap(map);
   }
 }
 
@@ -172,6 +201,7 @@ function initMap() {
 
   addDarkStyles();
   initMarkers();
+  drawGeoFence();
 
   if (config.runner_fixed_position) {
     runnerPos = { lat: config.lat, lng: config.lng };
@@ -206,6 +236,33 @@ function initMarkers() {
   });
 }
 
+function drawGeoFence() {
+  if (!config.geo_fence_enabled) {
+    if (geoFenceCircle) {
+      geoFenceCircle.setMap(null);
+      geoFenceCircle = null;
+    }
+    return;
+  }
+
+  const center = { lat: config.lat, lng: config.lng };
+  const radiusMeters = config.radius * 1000;
+
+  if (geoFenceCircle) geoFenceCircle.setMap(null);
+
+  geoFenceCircle = new google.maps.Circle({
+    strokeColor: "#00FF00",
+    strokeOpacity: 0.8,
+    strokeWeight: 2,
+    fillColor: "#00FF00",
+    fillOpacity: 0.08,
+    map: map,
+    center: center,
+    radius: radiusMeters
+  });
+}
+
+
 function distanceMeters(a, b) {
   const R = 6371000;
   const toRad = d => d*Math.PI/180;
@@ -218,22 +275,21 @@ function distanceMeters(a, b) {
 }
 
 async function getWalkingDistance(a, b) {
-  const r = await fetch(
-    "api.php?action=distance" +
-    "&origin=" + a.lat + "," + a.lng +
-    "&destination=" + b.lat + "," + b.lng +
-    "&_=" + Date.now()
-  );
+  try {
+    const url = "https://maps.googleapis.com/maps/api/directions/json?" +
+                "origin=" + a.lat + "," + a.lng +
+                "&destination=" + b.lat + "," + b.lng +
+                "&mode=walking&key=" + GOOGLE_MAPS_KEY;
 
-  const j = await r.json();
+    const r = await fetch(url);
+    const j = await r.json();
 
-  // Game paused → keine Distanz
-  if (j.paused) return null;
+    if (j.routes && j.routes.length > 0) {
+      return j.routes[0].legs[0].distance.value;
+    }
 
-  // echte Walking Distance vom Server
-  if (j.distance !== null) return j.distance;
+  } catch(e) {}
 
-  // Fallback: Luftlinie
   return distanceMeters(a, b);
 }
 
@@ -271,8 +327,73 @@ function updateMarkerSize() {
 }
 
 function updateCamera() {
-  if (!hunterPos || !runnerPos || gameStatus === "paused") return;
+  if (!autoCamera) return; // ✅ HIER
+  if (gameStatus === "paused") return;
+  if (!hunterPos || !runnerPos) return;
 
+  // 🟢 ERSTER FRAME: immer beide sichtbar
+  if (!cameraInitialized) {
+    const bounds = new google.maps.LatLngBounds();
+    bounds.extend(hunterPos);
+    bounds.extend(runnerPos);
+
+    map.fitBounds(bounds, {
+      top: 80,
+      bottom: 80,
+      left: 80,
+      right: 80
+    });
+
+    cameraInitialized = true;
+    updateMarkerSize();
+    return;
+  }
+
+
+
+  // 🗺️ Mini-Map: weit raus, beide immer sichtbar
+  if (miniMapMode) {
+    const bounds = new google.maps.LatLngBounds();
+    bounds.extend(hunterPos);
+    bounds.extend(runnerPos);
+
+    map.fitBounds(bounds, {
+      top: 80,
+      bottom: 80,
+      left: 80,
+      right: 80
+    });
+
+    updateMarkerSize();
+    return;
+  }
+
+  // 🔍 Smart-Zoom: so nah wie möglich, aber beide sichtbar
+  if (smartZoom) {
+    const bounds = new google.maps.LatLngBounds();
+    bounds.extend(hunterPos);
+    bounds.extend(runnerPos);
+
+    map.fitBounds(bounds, {
+      top: 60,
+      bottom: 60,
+      left: 60,
+      right: 60
+    });
+
+    const MAX_ZOOM = 18;
+
+    google.maps.event.addListenerOnce(map, "idle", () => {
+      if (map.getZoom() > MAX_ZOOM) {
+        map.setZoom(MAX_ZOOM);
+      }
+    });
+
+    updateMarkerSize();
+    return;
+  }
+
+  // 🎯 Normale Jagd-Kamera (DEIN ursprüngliches Verhalten)
   const dist = distanceMeters(runnerPos, hunterPos);
 
   let zoom;
@@ -280,9 +401,7 @@ function updateCamera() {
   else if (dist > 3200) zoom = 14.5;
   else if (dist > 1500) zoom = 16.0;
   else if (dist > 1000) zoom = 16.5;
-  else if (dist > 600) zoom = 17.0;
-  else if (dist > 350) zoom = 17.0;
-  else zoom = 17.0; // 🧨 Finale: maximaler Zoom
+  else zoom = 17.0;
 
   const center = {
     lat: (hunterPos.lat + runnerPos.lat) / 2,
@@ -294,8 +413,12 @@ function updateCamera() {
   updateMarkerSize();
 }
 
+
+
+
 let lastDistanceUpdate = 0;
 async function updateDistance() {
+if (!showDistance) return;
   const now = Date.now();
   if (now - lastDistanceUpdate < 2000) return;
   lastDistanceUpdate = now;
@@ -333,14 +456,16 @@ function trackPlayers() {
   const hunterRT = RealtimeIRL.forStreamer("twitch", config.hunter_id);
   const alert = document.getElementById("caught-alert");
 
-  runnerRT.addLocationListener(l => {
-    if (!config.runner_fixed_position && gameStatus === "running") {
-      runnerPos = { lat: l.latitude, lng: l.longitude };
-      runnerMarker.setPosition(runnerPos);
-    }
-    updateDistance();
-    checkCatch(alert);
-  });
+runnerRT.addLocationListener(l => {
+  if (!config.runner_fixed_position && gameStatus === "running") {
+    runnerPos = { lat: l.latitude, lng: l.longitude };
+    runnerMarker.setPosition(runnerPos);
+    updateCamera(); // 🔥 DAS FEHLTE
+  }
+  updateDistance();
+  checkCatch(alert);
+});
+
 
   hunterRT.addLocationListener(l => {
     if (gameStatus === "running") {
@@ -355,5 +480,6 @@ function trackPlayers() {
 
 initOverlay();
 </script>
+<div id="footer">Made with ❤️ by romestylez</div>
 </body>
 </html>
