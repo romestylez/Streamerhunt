@@ -1,10 +1,11 @@
 <?php
 header("Content-Type: application/json");
 
-$basePath = __DIR__;
+$securePath = __DIR__;
 
-$configFile = $basePath . "/config.php";
-$stateFile  = $basePath . "/game_state.json";
+$configFile = $securePath . "/config.php";
+$stateFile  = $securePath . "/game_state.json";
+$snapshotFile = $securePath . "/runner_snapshot.json";
 
 if (!file_exists($configFile) || !file_exists($stateFile)) {
     http_response_code(500);
@@ -17,6 +18,7 @@ $config = include $configFile;
 
 // ✅ State bleibt JSON
 $state  = json_decode(file_get_contents($stateFile), true);
+
 
 $allowedIP = $config["allowed_ip"] ?? null;
 
@@ -93,6 +95,8 @@ if ($action === "config") {
         "geo_fence_enabled" => $config["geo_fence_enabled"],
         "radius" => $config["radius"],
 		"round_minutes" => $config["round_minutes"],
+		"runner_runtime_minutes" => $config["runner_runtime_minutes"] ?? 30,
+		"position_frequency_minutes" => $config["position_frequency_minutes"] ?? 1,
         "google_maps_key" => $config["google_maps_api_key"]
     ], JSON_PRETTY_PRINT);
     exit;
@@ -190,6 +194,49 @@ if ($action === "add_route") {
     echo json_encode(["ok"=>true]);
     exit;
 }
+
+if ($action === "save_runner_snapshot") {
+    $slot = intval($_POST["slot"] ?? -1);
+    $lat  = floatval($_POST["lat"] ?? 0);
+    $lng  = floatval($_POST["lng"] ?? 0);
+
+    if ($slot < 0) {
+        echo json_encode(["error"=>"invalid slot"]);
+        exit;
+    }
+
+    $current = file_exists($snapshotFile)
+        ? json_decode(file_get_contents($snapshotFile), true)
+        : null;
+
+    // ✅ Nur neuen Slot speichern
+    if (!$current || $current["slot_index"] !== $slot) {
+        file_put_contents(
+            $snapshotFile,
+            json_encode([
+                "slot_index" => $slot,
+                "lat" => $lat,
+                "lng" => $lng,
+                "timestamp" => time()
+            ], JSON_PRETTY_PRINT)
+        );
+    }
+
+    echo json_encode(["ok"=>true]);
+    exit;
+}
+
+
+if ($action === "runner_snapshot") {
+    if (!file_exists($snapshotFile)) {
+        echo json_encode(null);
+        exit;
+    }
+
+    echo file_get_contents($snapshotFile);
+    exit;
+}
+
 
 http_response_code(400);
 echo json_encode(["error" => "Invalid action"]);
