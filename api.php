@@ -79,6 +79,7 @@ if ($action === "config") {
         "runner_fixed_position" => $config["runner_fixed_position"],
         "geo_fence_enabled" => $config["geo_fence_enabled"],
         "radius" => $config["radius"],
+        "round_minutes" => $config["round_minutes"],
         "google_maps_key" => $config["google_maps_api_key"]
     ], JSON_PRETTY_PRINT);
     exit;
@@ -138,3 +139,4 @@ if ($action === "distance") {
 http_response_code(400);
 echo json_encode(["error" => "Invalid action"]);
 exit;
+
