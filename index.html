@@ -125,7 +125,9 @@ let timerStopped = false;
 let cameraInitialized = false;
 let roundStart = null;
 let roundMinutes = null;
-
+let runnerPath = [];
+let hunterPath = [];
+let runnerLine, hunterLine;
 
 function pollGameState() {
   fetch("api.php?action=state&_=" + Date.now())
@@ -155,15 +157,32 @@ function updateUIForState() {
     if (runnerMarker) runnerMarker.setMap(null);
     if (hunterMarker) hunterMarker.setMap(null);
     if (geoFenceCircle) geoFenceCircle.setMap(null);
+	// 🔄 Routen zurücksetzen + ausblenden
+runnerPath = [];
+hunterPath = [];
 
-  } else {
+if (runnerLine) {
+  runnerLine.setPath([]);
+  runnerLine.setMap(null);
+}
+if (hunterLine) {
+  hunterLine.setPath([]);
+  hunterLine.setMap(null);
+}
+
+    } else {
     pauseOverlay.style.display = "none";
     distBox.style.display = showDistance ? "block" : "none";
 
     if (runnerMarker) runnerMarker.setMap(map);
     if (hunterMarker) hunterMarker.setMap(map);
     if (geoFenceCircle) geoFenceCircle.setMap(map);
+
+    // 🔁 Linien beim Resume wieder einblenden
+    if (runnerLine) runnerLine.setMap(map);
+    if (hunterLine) hunterLine.setMap(map);
   }
+
 }
 
 function loadConfig() {
@@ -222,12 +241,34 @@ function initMap() {
 
   addDarkStyles();
   initMarkers();
+   // 🔴 Runner-Route
+  runnerLine = new google.maps.Polyline({
+    map,
+    path: [],
+    strokeColor: "#FF0000",
+    strokeOpacity: 0.9,
+    strokeWeight: 3
+  });
+
+  // 🟢 Hunter-Route
+  hunterLine = new google.maps.Polyline({
+    map,
+    path: [],
+    strokeColor: "#00FF00",
+    strokeOpacity: 0.9,
+    strokeWeight: 3
+  });
   drawGeoFence();
 
   if (config.runner_fixed_position) {
-    runnerPos = { lat: config.lat, lng: config.lng };
-    runnerMarker.setPosition(runnerPos);
-  }
+  runnerPos = { lat: config.lat, lng: config.lng };
+  runnerMarker.setPosition(runnerPos);
+
+  // 🔴 Startpunkt für Route setzen
+  runnerPath.push(runnerPos);
+  runnerLine.setPath(runnerPath);
+}
+
 
   trackPlayers();
 }
@@ -515,8 +556,12 @@ function trackPlayers() {
 runnerRT.addLocationListener(l => {
   if (!config.runner_fixed_position && gameStatus === "running") {
     runnerPos = { lat: l.latitude, lng: l.longitude };
-    runnerMarker.setPosition(runnerPos);
-    updateCamera(); // 🔥 DAS FEHLTE
+runnerMarker.setPosition(runnerPos);
+
+runnerPath.push(runnerPos);
+runnerLine.setPath(runnerPath);
+
+updateCamera();
   }
   updateDistance();
   checkCatch(alert);
@@ -527,7 +572,12 @@ runnerRT.addLocationListener(l => {
     if (gameStatus === "running") {
       hunterPos = { lat: l.latitude, lng: l.longitude };
       hunterMarker.setPosition(hunterPos);
-      updateCamera();
+
+hunterPath.push(hunterPos);
+hunterLine.setPath(hunterPath);
+
+updateCamera();
+
     }
     updateDistance();
     checkCatch(alert);
