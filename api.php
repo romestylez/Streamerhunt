@@ -25,6 +25,7 @@ $action = $_GET["action"] ?? null;
 // ✅ Remote Game Control
 if (in_array($action, ["start", "pause"])) {
 
+    // 🔒 Nur Start/Pause darf IP-geschützt sein
     if ($allowedIP && $_SERVER["REMOTE_ADDR"] !== $allowedIP) {
         http_response_code(403);
         echo json_encode(["error"=>"Forbidden"]);
@@ -32,6 +33,18 @@ if (in_array($action, ["start", "pause"])) {
     }
 
     $state["status"] = ($action === "start" ? "running" : "paused");
+
+    // 🔥 WICHTIG: Bei Pause Routen serverseitig zurücksetzen
+    if ($action === "pause") {
+        file_put_contents(
+            $securePath . "/routes.json",
+            json_encode([
+                "runner" => [],
+                "hunter" => []
+            ], JSON_PRETTY_PRINT)
+        );
+    }
+
     file_put_contents($stateFile, json_encode($state, JSON_PRETTY_PRINT));
 
     echo json_encode(["message" => "Game " . $state["status"]]);
@@ -79,7 +92,7 @@ if ($action === "config") {
         "runner_fixed_position" => $config["runner_fixed_position"],
         "geo_fence_enabled" => $config["geo_fence_enabled"],
         "radius" => $config["radius"],
-        "round_minutes" => $config["round_minutes"],
+		"round_minutes" => $config["round_minutes"],
         "google_maps_key" => $config["google_maps_api_key"]
     ], JSON_PRETTY_PRINT);
     exit;
@@ -178,9 +191,6 @@ if ($action === "add_route") {
     exit;
 }
 
-
 http_response_code(400);
 echo json_encode(["error" => "Invalid action"]);
 exit;
-
-
