@@ -250,15 +250,30 @@ function initMap() {
     strokeWeight: 3
   });
 
-  // 🟢 Hunter-Route
-  hunterLine = new google.maps.Polyline({
-    map,
-    path: [],
-    strokeColor: "#00FF00",
-    strokeOpacity: 0.9,
-    strokeWeight: 3
+hunterLine = new google.maps.Polyline({
+  map,
+  path: [],
+  strokeColor: "#00FF00",
+  strokeOpacity: 0.9,
+  strokeWeight: 3
+});
+
+// 🔁 Bestehende Routen vom Server laden
+fetch("api.php?action=routes")
+  .then(r => r.json())
+  .then(data => {
+    if (data.runner && Array.isArray(data.runner)) {
+      runnerPath = data.runner;
+      runnerLine.setPath(runnerPath);
+    }
+    if (data.hunter && Array.isArray(data.hunter)) {
+      hunterPath = data.hunter;
+      hunterLine.setPath(hunterPath);
+    }
   });
-  drawGeoFence();
+
+drawGeoFence();
+
 
   if (config.runner_fixed_position) {
   runnerPos = { lat: config.lat, lng: config.lng };
@@ -267,6 +282,8 @@ function initMap() {
   // 🔴 Startpunkt für Route setzen
   runnerPath.push(runnerPos);
   runnerLine.setPath(runnerPath);
+  fetch(`api.php?action=add_route&type=runner&lat=${runnerPos.lat}&lng=${runnerPos.lng}`);
+
 }
 
 
@@ -560,7 +577,7 @@ runnerMarker.setPosition(runnerPos);
 
 runnerPath.push(runnerPos);
 runnerLine.setPath(runnerPath);
-
+fetch(`api.php?action=add_route&type=runner&lat=${runnerPos.lat}&lng=${runnerPos.lng}`);
 updateCamera();
   }
   updateDistance();
@@ -575,6 +592,7 @@ updateCamera();
 
 hunterPath.push(hunterPos);
 hunterLine.setPath(hunterPath);
+fetch(`api.php?action=add_route&type=hunter&lat=${hunterPos.lat}&lng=${hunterPos.lng}`);
 
 updateCamera();
 
