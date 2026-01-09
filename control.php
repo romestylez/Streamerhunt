@@ -1,8 +1,10 @@
 <?php
-$securePath = realpath(__DIR__ . "/../../secure/streamer-hunt");
+header("Content-Type: application/json");
 
-$configFile = $securePath . "/config.php";
-$stateFile  = $securePath . "/game_state.json";
+$basePath = __DIR__;
+
+$configFile = $basePath . "/config.php";
+$stateFile  = $basePath . "/game_state.json";
 
 $config = include $configFile;
 
@@ -31,10 +33,21 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     }
 
     if (isset($_POST["pause_game"])) {
-        $state["status"] = "paused";
-        file_put_contents($stateFile, json_encode($state, JSON_PRETTY_PRINT));
-        exit(json_encode(["success" => true, "msg" => "paused"]));
-    }
+    $state["status"] = "paused";
+    file_put_contents($stateFile, json_encode($state, JSON_PRETTY_PRINT));
+
+    // 🔥 ROUTES BEI PAUSE ZURÜCKSETZEN
+    file_put_contents(
+        $securePath . "/routes.json",
+        json_encode([
+            "runner" => [],
+            "hunter" => []
+        ], JSON_PRETTY_PRINT)
+    );
+
+    exit(json_encode(["success" => true, "msg" => "paused"]));
+}
+
 
     if (isset($_POST["start_game"])) {
     $state["status"] = "running";
