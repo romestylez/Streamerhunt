@@ -88,6 +88,63 @@
   text-shadow: 0 0 4px #000;
   font-weight: 600;
 }
+
+#rules-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  display: none;
+  z-index: 5000;
+}
+
+#rules-popup {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 640px;
+  max-width: 95vw;
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 0 40px rgba(0,157,255,0.6);
+}
+
+#rules-popup iframe {
+  width: 100%;
+  height: 400px; /* wird gleich automatisch angepasst */
+  border: none;
+}
+
+#rules-close {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  background: none;
+  border: none;
+  color: #6bd4ff;
+  font-size: 22px;
+  cursor: pointer;
+  z-index: 10;
+}
+
+#rules-btn {
+  position: absolute;
+  top: 105px;
+  left: 10px;
+  padding: 6px 14px;
+  font-size: 14px;
+  font-weight: bold;
+  border-radius: 6px;
+  border: none;
+  background: rgba(0,0,0,0.6);
+  color: #6bd4ff;
+  cursor: pointer;
+  z-index: 3000;
+}
+
+#rules-btn:hover {
+  background: rgba(0,0,0,0.8);
+}
 </style>
 </head>
 <body>
@@ -95,6 +152,13 @@
 <div id="caught-alert">CAUGHT!</div>
 <div id="timer-box">Time left: --:--</div>
 <div id="distance-box">Distance: -- m</div>
+<button id="rules-btn">Rules</button>
+<div id="rules-overlay">
+  <div id="rules-popup">
+    <button id="rules-close">✕</button>
+    <iframe src="rules.php"></iframe>
+  </div>
+</div>
 <div id="paused-overlay">GAME PAUSED</div>
 <div id="map"></div>
 
@@ -128,6 +192,10 @@ let roundMinutes = null;
 let runnerPath = [];
 let hunterPath = [];
 let runnerLine, hunterLine;
+
+function isSamePoint(a, b) {
+  return a && b && a.lat === b.lat && a.lng === b.lng;
+}
 
 function pollGameState() {
   fetch("api.php?action=state&_=" + Date.now())
@@ -280,12 +348,13 @@ drawGeoFence();
   runnerMarker.setPosition(runnerPos);
 
   // 🔴 Startpunkt für Route setzen
+if (!isSamePoint(runnerPath.at(-1), runnerPos)) {
   runnerPath.push(runnerPos);
   runnerLine.setPath(runnerPath);
   fetch(`api.php?action=add_route&type=runner&lat=${runnerPos.lat}&lng=${runnerPos.lng}`);
-
 }
 
+}
 
   trackPlayers();
 }
@@ -552,9 +621,14 @@ function updateTimer() {
     return;
   }
 
-  const m = Math.floor(left / 60);
+  const h = Math.floor(left / 3600);
+  const m = Math.floor((left % 3600) / 60);
   const s = left % 60;
-  box.textContent = `Time left: ${m}:${s.toString().padStart(2,"0")}`;
+
+  box.textContent =
+  `Time left: ${h.toString().padStart(2,"0")}:` +
+  `${m.toString().padStart(2,"0")}:` +
+  `${s.toString().padStart(2,"0")}`;
 
   box.style.color =
     left > 120 ? "#00FF00" :
@@ -572,39 +646,91 @@ function trackPlayers() {
 
 runnerRT.addLocationListener(l => {
   if (!config.runner_fixed_position && gameStatus === "running") {
-    runnerPos = { lat: l.latitude, lng: l.longitude };
-runnerMarker.setPosition(runnerPos);
+    const newPos = { lat: l.latitude, lng: l.longitude };
+    runnerMarker.setPosition(newPos);
 
-runnerPath.push(runnerPos);
-runnerLine.setPath(runnerPath);
-fetch(`api.php?action=add_route&type=runner&lat=${runnerPos.lat}&lng=${runnerPos.lng}`);
-updateCamera();
+    if (!isSamePoint(runnerPath.at(-1), newPos)) {
+      runnerPos = newPos;
+      runnerPath.push(newPos);
+      runnerLine.setPath(runnerPath);
+      fetch(`api.php?action=add_route&type=runner&lat=${newPos.lat}&lng=${newPos.lng}`);
+	  // 🔒 Snapshot für Hunter-View speichern (Slot-basiert)
+if (roundStart && config.runner_runtime_minutes && config.position_frequency_minutes) {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const revealAt = roundStart + (config.runner_runtime_minutes * 60);
+
+  if (nowSec >= revealAt) {
+    const intervalSec = config.position_frequency_minutes * 60;
+    const slotIndex = Math.floor((nowSec - revealAt) / intervalSec);
+
+    fetch("api.php?action=save_runner_snapshot", {
+      method: "POST",
+      body: new URLSearchParams({
+        slot: slotIndex,
+        lat: newPos.lat,
+        lng: newPos.lng
+      })
+    });
+  }
+}
+
+    }
+
+    updateCamera();
   }
   updateDistance();
   checkCatch(alert);
 });
 
 
-  hunterRT.addLocationListener(l => {
-    if (gameStatus === "running") {
-      hunterPos = { lat: l.latitude, lng: l.longitude };
-      hunterMarker.setPosition(hunterPos);
 
-hunterPath.push(hunterPos);
-hunterLine.setPath(hunterPath);
-fetch(`api.php?action=add_route&type=hunter&lat=${hunterPos.lat}&lng=${hunterPos.lng}`);
+hunterRT.addLocationListener(l => {
+  if (gameStatus === "running") {
+    const newPos = { lat: l.latitude, lng: l.longitude };
+    hunterMarker.setPosition(newPos);
 
-updateCamera();
-
+    if (!isSamePoint(hunterPath.at(-1), newPos)) {
+      hunterPos = newPos;
+      hunterPath.push(newPos);
+      hunterLine.setPath(hunterPath);
+      fetch(`api.php?action=add_route&type=hunter&lat=${newPos.lat}&lng=${newPos.lng}`);
     }
-    updateDistance();
-    checkCatch(alert);
+
+    updateCamera();
+  }
+  updateDistance();
+  checkCatch(alert);
+});
+
+}
+
+const rulesBtn = document.getElementById("rules-btn");
+const rulesOverlay = document.getElementById("rules-overlay");
+const rulesClose = document.getElementById("rules-close");
+
+if (rulesBtn && rulesOverlay && rulesClose) {
+  rulesBtn.addEventListener("click", () => {
+    rulesOverlay.style.display = "block";
+  });
+
+  rulesClose.addEventListener("click", () => {
+    rulesOverlay.style.display = "none";
+  });
+
+  window.addEventListener("message", e => {
+    if (e.data?.type === "rulesHeight") {
+      const iframe = document.querySelector("#rules-popup iframe");
+      if (iframe) iframe.style.height = e.data.height + "px";
+    }
   });
 }
+
 
 initOverlay();
 setInterval(updateTimer, 1000);
 </script>
+
+
 <div id="footer">Made with ❤️ by romestylez</div>
 </body>
 </html>
