@@ -1,17 +1,48 @@
 <?php
-$securePath = __DIR__;
+$securePath = __DIR__
 
 $configFile = $securePath . "/config.php";
 $stateFile  = $securePath . "/game_state.json";
+$rulesFile = $securePath . "/rules.json";
 
+$rulesData = [
+    "title" => "Streamer Hunt – Rules",
+    "rules" => []
+];
+
+if (file_exists($rulesFile)) {
+    $rulesData = json_decode(file_get_contents($rulesFile), true) ?? $rulesData;
+}
 $config = include $configFile;
+
+$config["runner_runtime_minutes"] = $config["runner_runtime_minutes"] ?? 30;
+$config["position_frequency_minutes"] = $config["position_frequency_minutes"] ?? 20;
+
 
 $state  = json_decode(file_get_contents($stateFile), true);
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
+if (isset($_POST["save_rules"])) {
+
+    $title = trim($_POST["rules_title"]);
+    $rulesRaw = trim($_POST["rules_text"]);
+
+    $rules = array_filter(array_map("trim", explode("\n", $rulesRaw)));
+
+    file_put_contents(
+        $rulesFile,
+        json_encode([
+            "title" => $title,
+            "rules" => array_values($rules)
+        ], JSON_PRETTY_PRINT)
+    );
+
+    exit(json_encode(["success" => true, "msg" => "rules_saved"]));
+}
 
     if (isset($_POST["save_settings"])) {
-
+		$config["runner_runtime_minutes"] = intval($_POST["runner_runtime_minutes"]);
+		$config["position_frequency_minutes"] = intval($_POST["position_frequency_minutes"]);
         $config["runner_id"] = $_POST["runner_id"];
         $config["hunter_id"] = $_POST["hunter_id"];
         $config["runner_fixed_position"] = ($_POST["runner_fixed_position"] === "1");
@@ -47,10 +78,16 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 }
 
 
-    if (isset($_POST["start_game"])) {
+if (isset($_POST["start_game"])) {
     $state["status"] = "running";
     $state["round_start"] = time();
     file_put_contents($stateFile, json_encode($state, JSON_PRETTY_PRINT));
+
+    file_put_contents(
+        $securePath . "/routes.json",
+        json_encode(["runner"=>[], "hunter"=>[]], JSON_PRETTY_PRINT)
+    );
+
     exit(json_encode(["success" => true, "msg" => "running"]));
 }
 }
@@ -88,6 +125,33 @@ input[type=text], input[type=number] {
   border-radius: 6px;
   border: none;
 }
+
+.tabs {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.tab {
+  padding: 10px 18px;
+  background: #222;
+  border-radius: 8px;
+  color: #c8e1ff;
+  text-decoration: none;
+  font-weight: bold;
+  border: 1px solid #333;
+}
+
+.tab:hover {
+  background: #2a3b55;
+}
+
+.tab.active {
+  background: #007aff;
+  border-color: #007aff;
+  color: #fff;
+}
+
 label { display: block; margin-top: 12px; }
 small { color: #bbb; }
 button {
@@ -127,8 +191,12 @@ button:hover { background-color: #444; }
   </span>
 </div>
 
+<div class="tabs">
+  <div class="tab active" id="tabBtnGame" onclick="showTab('game')">🎮 Game Control</div>
+  <div class="tab" id="tabBtnRules" onclick="showTab('rules')">📜 Rules</div>
+</div>
 
-
+<div id="tab-game">
 <form id="controlForm" method="POST">
 
   <label>Runner Twitch ID:</label>
@@ -148,6 +216,17 @@ button:hover { background-color: #444; }
        value="<?= $config['round_minutes'] ?? 30 ?>">
 <small>Countdown starts when game is running</small>
 
+<label>Runner Runtime (Minutes):</label>
+<input type="number" name="runner_runtime_minutes"
+       min="1" max="1440"
+       value="<?= intval($config['runner_runtime_minutes']) ?>">
+<small>Maximale Laufzeit des Runners</small>
+
+<label>Position Frequency (Minutes):</label>
+<input type="number" name="position_frequency_minutes"
+       min="1" max="60"
+       value="<?= intval($config['position_frequency_minutes']) ?>">
+<small>Wie oft neue Positionen verarbeitet werden</small>
 
 <label>Search Address:</label>
 <input type="text" id="addressInput" placeholder="Enter address...">
@@ -182,6 +261,27 @@ button:hover { background-color: #444; }
 <button type="button" onclick="saveSettings()">💾 Save Settings</button>
 
 </form>
+</div>
+
+<div id="tab-rules" style="display:none; max-width:600px;">
+
+  <h2>📜 Rules Editor</h2>
+
+  <label>Title</label>
+  <input type="text" id="rulesTitle"
+         value="<?= htmlspecialchars($rulesData["title"]) ?>">
+
+  <label>Rules (one per line)</label>
+  <textarea id="rulesText" rows="10" style="width:100%;"><?= 
+    htmlspecialchars(implode("\n", $rulesData["rules"])) 
+  ?></textarea>
+
+  <br><br>
+  <button type="button" onclick="saveRules()">💾 Save Rules</button>
+
+</div>
+
+
 
 <script>
 let autocomplete;
@@ -226,10 +326,12 @@ function showMessage(msg) {
 
 // AJAX Start/Pause Button
 function sendAction(action) {
-    fetch("", {
+    const data = new FormData();
+    data.append(action, "1");
+
+    fetch(window.location.href, {
         method: "POST",
-        headers: {"Content-Type": "application/x-www-form-urlencoded"},
-        body: action + "=1"
+        body: data
     })
     .then(r => r.json())
     .then(j => {
@@ -237,6 +339,7 @@ function sendAction(action) {
         showMessage(j.msg);
     });
 }
+
 
 document.getElementById("startPauseBtn").addEventListener("click", () => {
     const status = document.getElementById("status-value").textContent.toLowerCase();
@@ -277,8 +380,38 @@ function refreshStatusBox() {
       });
 }
 
+function showTab(tab) {
+  document.getElementById("tab-game").style.display =
+    tab === "game" ? "block" : "none";
+
+  document.getElementById("tab-rules").style.display =
+    tab === "rules" ? "block" : "none";
+
+  document.getElementById("tabBtnGame")
+    .classList.toggle("active", tab === "game");
+
+  document.getElementById("tabBtnRules")
+    .classList.toggle("active", tab === "rules");
+}
+
+function saveRules() {
+  const data = new URLSearchParams();
+  data.append("save_rules", "1");
+  data.append("rules_title", document.getElementById("rulesTitle").value);
+  data.append("rules_text", document.getElementById("rulesText").value);
+
+  fetch("", {
+    method: "POST",
+    body: data
+  })
+  .then(r => r.json())
+  .then(() => alert("✅ Rules saved"));
+}
+
+
 refreshStatusBox();
 setInterval(refreshStatusBox, 2000);
+showTab("game");
 </script>
 
 </body>
