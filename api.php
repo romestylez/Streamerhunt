@@ -135,8 +135,52 @@ if ($action === "distance") {
     exit;
 }
 
+// =============================
+// Route Storage
+// =============================
+
+$routeFile = $securePath . "/routes.json";
+
+// Initialisieren falls fehlt
+if (!file_exists($routeFile)) {
+    file_put_contents($routeFile, json_encode([
+        "runner" => [],
+        "hunter" => []
+    ], JSON_PRETTY_PRINT));
+}
+
+// Route abrufen
+if ($action === "routes") {
+    echo file_get_contents($routeFile);
+    exit;
+}
+
+// Punkt hinzufügen
+if ($action === "add_route") {
+    $type = $_GET["type"] ?? null; // runner | hunter
+    $lat  = $_GET["lat"] ?? null;
+    $lng  = $_GET["lng"] ?? null;
+
+    if (!in_array($type, ["runner","hunter"]) || !$lat || !$lng) {
+        http_response_code(400);
+        echo json_encode(["error"=>"invalid data"]);
+        exit;
+    }
+
+    $routes = json_decode(file_get_contents($routeFile), true);
+    $routes[$type][] = [
+        "lat" => (float)$lat,
+        "lng" => (float)$lng
+    ];
+
+    file_put_contents($routeFile, json_encode($routes, JSON_PRETTY_PRINT));
+    echo json_encode(["ok"=>true]);
+    exit;
+}
+
 
 http_response_code(400);
 echo json_encode(["error" => "Invalid action"]);
 exit;
+
 
