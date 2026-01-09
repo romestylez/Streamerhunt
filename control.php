@@ -1,10 +1,8 @@
 <?php
-header("Content-Type: application/json");
+$securePath = __DIR__;
 
-$basePath = __DIR__;
-
-$configFile = $basePath . "/config.php";
-$stateFile  = $basePath . "/game_state.json";
+$configFile = $securePath . "/config.php";
+$stateFile  = $securePath . "/game_state.json";
 
 $config = include $configFile;
 
