@@ -1,226 +1,186 @@
-# 🗺️ Streamer Hunt – Map & Distance Overlays
+# 🗺️ Streamer Hunt – Runner vs. Hunter (Map & Joker System)
 
-A small, file-based **PHP + HTML** project for an IRL  
-**“runner vs. hunter”** stream overlay setup.
+A file-based **PHP + HTML** project for an IRL  
+**“Runner vs. Hunter”** stream game with controlled position reveals.
 
-Designed for **OBS Browser Sources** with live map tracking, distance display,
-pause handling and a catch alert.
+Designed for **OBS Browser Sources**, manual **Joker reveals** and a secure, server-side game flow.
 
 ---
 
 ## 📦 Components
 
-- 🗺️ **`index.html`**  
-  Google Maps overlay showing runner & hunter positions, live distance HUD,
-  pause overlay and a **CAUGHT!** alert.
+### 🧍‍♂️ Views (Overlays)
 
-- 🎯 **`distance.html`**  
-  Minimal OBS-friendly distance-only overlay (large number, transparent background).
+- 🗺️ **hunter.html**  
+  Map view **for the Hunters**  
+  → shows the **Runner position**  
+  → position updates:
+  - automatically by timer
+  - **manually via Hunter Joker**
 
-- 🔌 **`api.php`**  
-  JSON API used by the overlays:
+- 🏃 **runner.html**  
+  Map view **for the Runner**  
+  → shows the **Hunter position**  
+  → **ONLY visible when a Runner Joker is used**  
+  → no countdown, no automatic updates
+
+---
+
+### 🔌 Backend
+
+- 🔌 **api.php**  
+  Central JSON API:
   - configuration & game state
-  - **server-side Google Directions proxy** for walking distance
+  - route storage
+  - snapshot delivery
+  - **Joker reveal actions**
+  - Google Directions proxy (distance)
 
-- 🎛️ **`control.php`**  
-  Simple control panel to:
-  - edit settings
-  - start / pause the game
+- 🎛️ **control.php**  
+  Control panel to:
+  - edit game settings
+  - start / pause rounds
+  - manage runner / hunter IDs
 
-- ⚙️ **`config.php`** + **`game_state.json`**  
-  File-based configuration and runtime state.
-
-> ⚠️ This repository intentionally ships with **placeholder values only**  
-> (no real API keys or Twitch IDs).  
-> **Never commit your real production config to a public repository.**
-
----
-
-## 🎥 Demo / Usage
-
-- 🗺️ Map overlay: `index.html`
-- 🎯 Distance-only overlay: `distance.html`
-
-Both are designed to be added as **Browser Sources in OBS**.
+- ⚙️ **config.php**, **game_state.json**  
+  File-based configuration & runtime state  
+  (intentionally excluded from public repos)
 
 ---
 
-## 🧠 How it works
+## 🧠 Core Concept
 
-### 📡 Realtime player locations
-The front-end uses the **RealtimeIRL** browser library:
+### 🔍 Snapshots instead of live tracking
 
-- CDN:  
-  ```
-  https://cdn.jsdelivr.net/npm/@rtirl/api@latest/lib/index.min.js
-  ```
+Positions are **not streamed live** to the opponents.
 
-It subscribes to live location updates for:
-- `runner_id`
-- `hunter_id`
+Instead:
+- positions are written to **snapshot JSON files**
+- views poll these snapshots
+- **Jokers force a snapshot update**
+
+This guarantees:
+- fair gameplay
+- no timer manipulation
+- deterministic reveals
 
 ---
 
-### 🗺️ Google Maps & distance calculation
+## 📂 Snapshot Files
 
-- The map itself uses the **Google Maps JavaScript API**
-- Walking distance is fetched via  
-  **`api.php?action=distance`**
-- The API calls the **Google Directions API server-side**
-- Distance is returned in **meters**
+| File | Contains | Used by |
+|----|--------|--------|
+| runner_snapshot.json | Runner position | hunter.html |
+| hunter_snapshot.json | Hunter position | runner.html |
 
-✅ No Google API key is exposed in browser JavaScript  
-✅ Same distance logic is used by **both** overlays
+---
 
-When the game is **paused**, the API returns:
+## 🃏 Joker System
 
-```json
-{ "paused": true }
+### 🎯 Hunter Joker (Hunters reveal the Runner)
+
+```
+GET api.php?action=hunter_reveal_now
 ```
 
-Overlays then hide markers and distance automatically.
+**Effect:**
+- updates `runner_snapshot.json`
+- `hunter.html` immediately shows the Runner position
+- countdown continues normally
 
 ---
 
-## 🔧 Requirements
+### 🏃 Runner Joker (Runner reveals the Hunters)
 
-- Web server with PHP support  
-  (Apache / Nginx / IIS **or** PHP built-in server)
-- PHP **7.4+** (PHP 8.x recommended)
-- Google Maps API key with billing enabled:
-  - **Maps JavaScript API**
-  - **Directions API**
+```
+GET api.php?action=runner_reveal_now
+```
 
----
-
-## 🚀 Quick Start (Local)
-
-1. Put all files into one folder (e.g. `public/`)
-2. Start PHP’s built-in web server:
-
-   ```bash
-   php -S 127.0.0.1:8000
-   ```
-
-3. Open in your browser:
-   - 🗺️ Map overlay  
-     `http://127.0.0.1:8000/index.html`
-   - 🎯 Distance overlay  
-     `http://127.0.0.1:8000/distance.html`
-   - 🎛️ Control panel  
-     `http://127.0.0.1:8000/control.php`
+**Effect:**
+- updates `hunter_snapshot.json`
+- `runner.html` immediately shows the Hunter position
+- stays visible until the next Runner Joker
 
 ---
 
-## ⚙️ Configuration
+### 🔐 Security
 
-Edit **`config.php`**:
+Both Joker endpoints are **IP-restricted** via:
 
 ```php
-return [
-  "google_maps_api_key"   => "YOUR_GOOGLE_API_KEY",
-  "runner_id"             => "TWITCH_ID_HERE",
-  "hunter_id"             => "TWITCH_ID_HERE",
-  "geo_fence_enabled"     => true,
-  "runner_fixed_position" => false,
-  "lat"                   => 7.913042,
-  "lng"                   => 98.33229,
-  "radius"                => 15,
-  "zoom"                  => 12,
-  "alarm"                 => true,
-  "catch_meter"           => 10,
-  "allowed_ip"            => "ALLOWED_IP_FOR_API_ACCESS",
-];
+"allowed_ip" => "YOUR_ALLOWED_IP"
 ```
 
 ---
 
-### 🔑 Important fields
-
-- 🔐 **`google_maps_api_key`**  
-  Used for:
-  - Google Maps JS (map rendering)
-  - Google Directions API (distance proxy)
-
-- 🎮 **`runner_id` / `hunter_id`**  
-  Twitch IDs used by RealtimeIRL for live GPS tracking.
-
-- 📍 **`runner_fixed_position`**  
-  If `true`, the runner is fixed at `lat/lng`
-  (useful for static bases or checkpoints).
-
-- 🎯 **`catch_meter`**  
-  When distance ≤ this value → **CAUGHT!** is triggered.
-
-- 🌐 **`allowed_ip`**  
-  Optional IP restriction for state-changing API actions:
-  - `start`
-  - `pause`
-  - `set_runner`
-  - `set_hunter`
-
----
-
-## 🔌 API Endpoints (`api.php`)
+## 🔌 API Overview
 
 ### 📖 Read-only
 
-- `GET api.php?action=config`  
-  Returns overlay configuration (incl. map key for JS loader)
-
-- `GET api.php?action=state`  
-  Returns current game state:
-  ```json
-  { "status": "paused" }
-  ```
-
-- `GET api.php?action=distance&origin=LAT,LNG&destination=LAT,LNG`  
-  Returns:
-  - `distance` (meters) when running
-  - `paused: true` when paused
+- `GET api.php?action=config`
+- `GET api.php?action=state`
+- `GET api.php?action=runner_snapshot`
+- `GET api.php?action=hunter_snapshot`
+- `GET api.php?action=routes`
+- `GET api.php?action=distance&origin=LAT,LNG&destination=LAT,LNG`
 
 ---
 
-### ✍️ State-changing (optional IP-restricted)
+### ✍️ State-changing (IP protected)
 
 - `GET api.php?action=start`
 - `GET api.php?action=pause`
+- `GET api.php?action=hunter_reveal_now`
+- `GET api.php?action=runner_reveal_now`
 - `GET api.php?action=set_runner&id=TWITCH_ID`
 - `GET api.php?action=set_hunter&id=TWITCH_ID`
 
 ---
 
-## 🎛️ Control Panel (`control.php`)
+## ⚙️ Configuration (config.php)
 
-`control.php` provides a simple UI to:
-
-- update map & catch settings
-- start / pause the game
-
-It writes changes to:
-- `config.php`
-- `game_state.json`
-
-> 🔒 **Security note**  
-> `control.php` has **no authentication**.  
-> If deployed publicly, protect it using:
-> - HTTP auth
-> - IP allowlists
-> - VPN
-> - reverse proxy auth
+```php
+return [
+  "google_maps_api_key" => "YOUR_GOOGLE_API_KEY",
+  "runner_id" => "TWITCH_RUNNER_ID",
+  "hunter_id" => "TWITCH_HUNTER_ID",
+  "lat" => 7.913042,
+  "lng" => 98.33229,
+  "zoom" => 12,
+  "catch_meter" => 10,
+  "runner_runtime_minutes" => 30,
+  "position_frequency_minutes" => 20,
+  "allowed_ip" => "ALLOWED_IP_FOR_JOKERS",
+];
+```
 
 ---
 
-## 🎥 OBS Usage Tips
+## 🎥 OBS Usage
 
-- Add **`distance.html`** as a Browser Source for a clean distance HUD
-- Add **`index.html`** as a Browser Source for the live map
+| Purpose | File |
+|------|------|
+| Hunter map | hunter.html |
+| Runner map | runner.html |
+| Control panel | control.php |
+
 - Set OBS Browser Source background to **transparent**
-- CSS is already optimized for overlays
+- All overlays are optimized for fullscreen usage
+
+---
+
+## 🔐 Security Notes
+
+- `control.php` has **no authentication**
+- Protect it using:
+  - HTTP auth
+  - IP allowlists
+  - VPN
+  - reverse proxy authentication
 
 ---
 
 ## 📜 License
 
-Choose a license (e.g. **MIT**) and add a `LICENSE` file
+Choose a license (e.g. **MIT**) and add a `LICENSE` file  
 if you want others to reuse or fork the project.
