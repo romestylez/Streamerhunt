@@ -209,7 +209,6 @@ if ($action === "save_runner_snapshot") {
         ? json_decode(file_get_contents($snapshotFile), true)
         : null;
 
-    // ✅ Nur neuen Slot speichern
     if (!$current || $current["slot_index"] !== $slot) {
         file_put_contents(
             $snapshotFile,
@@ -226,6 +225,107 @@ if ($action === "save_runner_snapshot") {
     exit;
 }
 
+// =============================
+// Hunter Snapshot liefern (für runner.html)
+// =============================
+if ($action === "hunter_snapshot") {
+    $file = $securePath . "/hunter_snapshot.json";
+
+    if (!file_exists($file)) {
+        echo json_encode(null);
+        exit;
+    }
+
+    echo file_get_contents($file);
+    exit;
+}
+
+// =============================
+// Runner Joker – Immediate Reveal Hunter
+// =============================
+if ($action === "runner_reveal_now") {
+
+    if ($allowedIP && $_SERVER["REMOTE_ADDR"] !== $allowedIP) {
+        http_response_code(403);
+        echo json_encode(["error" => "Forbidden"]);
+        exit;
+    }
+
+    $routeFile = $securePath . "/routes.json";
+    $hunterSnapshotFile = $securePath . "/hunter_snapshot.json";
+
+    if (!file_exists($routeFile)) {
+        echo json_encode(["error" => "no routes"]);
+        exit;
+    }
+
+    $routes = json_decode(file_get_contents($routeFile), true);
+
+    if (empty($routes["hunter"])) {
+        echo json_encode(["error" => "no hunter position"]);
+        exit;
+    }
+
+    $last = end($routes["hunter"]);
+
+    file_put_contents(
+        $hunterSnapshotFile,
+        json_encode([
+            "lat" => $last["lat"],
+            "lng" => $last["lng"],
+            "timestamp" => time(),
+            "source" => "runner_joker"
+        ], JSON_PRETTY_PRINT)
+    );
+
+    echo json_encode([
+        "ok" => true,
+        "msg" => "runner reveal triggered"
+    ]);
+    exit;
+}
+
+// =============================
+// Hunter Joker – Immediate Reveal Runner to Hunter
+// =============================
+if ($action === "hunter_reveal_now") {
+
+    if ($allowedIP && $_SERVER["REMOTE_ADDR"] !== $allowedIP) {
+        http_response_code(403);
+        echo json_encode(["error" => "Forbidden"]);
+        exit;
+    }
+
+    // Aktuelle Runner-Position aus bestehendem Snapshot
+    if (!file_exists($snapshotFile)) {
+        echo json_encode(["error" => "no runner position available"]);
+        exit;
+    }
+
+    $snap = json_decode(file_get_contents($snapshotFile), true);
+
+    if (!isset($snap["lat"], $snap["lng"])) {
+        echo json_encode(["error" => "invalid snapshot"]);
+        exit;
+    }
+
+    file_put_contents(
+        $snapshotFile,
+        json_encode([
+            "slot_index" => time(), // egal, nur neu ≠ alt
+            "lat" => $snap["lat"],
+            "lng" => $snap["lng"],
+            "timestamp" => time(),
+            "source" => "hunter_joker"
+        ], JSON_PRETTY_PRINT)
+    );
+
+    echo json_encode([
+        "ok" => true,
+        "msg" => "hunter reveal triggered"
+    ]);
+    exit;
+}
 
 if ($action === "runner_snapshot") {
     if (!file_exists($snapshotFile)) {
