@@ -11,6 +11,22 @@ Designed for **OBS Browser Sources**, manual **Joker reveals** and a secure, ser
 
 ### 🧍‍♂️ Views (Overlays)
 
+- 🗺️ **index.html**  
+  Google Maps overlay showing runner & hunter positions, live distance HUD,
+  pause overlay and a **CAUGHT!** alert.
+
+- 🎯 **distance.html**  
+  Minimal OBS-friendly distance-only overlay (large number, transparent background).
+
+- 🔌 **api.php**  
+  JSON API used by the overlays:
+  - configuration & game state
+
+- 🎛️ **control.php**  
+  Simple control panel to:
+  - edit settings/rules
+  - start / pause the game
+
 - 🗺️ **hunter.html**  
   Map view **for the Hunters**  
   → shows the **Runner position**  
