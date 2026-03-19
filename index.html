@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>smtxLOST Streamer Hunt</title>
+<link rel="icon" href="favicon.ico">
+
+<style>
+  html, body, #map {
+  width: 100%; height: 100%;
+  margin: 0;
+  background: transparent;
+}
+
+  #caught-alert {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0,0,0,0.85);
+  padding: 20px 40px;
+  border: 3px solid red;
+  border-radius: 12px;
+  font-size: 42px;
+  font-weight: bold;
+  color: red;
+  text-shadow: 0 0 10px red;
+  display: none;
+  z-index: 2000;
+  animation: pulse 0.7s infinite;
+}
+
+  @keyframes pulse {
+  0% { transform: translate(-50%, -50%) scale(1); }
+  50% { transform: translate(-50%, -50%) scale(1.1); }
+  100% { transform: translate(-50%, -50%) scale(1); }
+}
+
+  #distance-box {
+  position: absolute;
+  top: 55px;
+  left: 10px;
+  background: rgba(0,0,0,0.6);
+  padding: 10px 16px;
+  color: #00FF00;
+  font-size: 20px;
+  font-weight: bold;
+  border-radius: 8px;
+  z-index: 3000;
+}
+  
+  #timer-box {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: rgba(0,0,0,0.6);
+  padding: 8px 16px;
+  color: #00FF00;
+  font-size: 18px;
+  font-weight: bold;
+  border-radius: 8px;
+  z-index: 3000;
+}
+
+  #paused-overlay {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0,0,0,0.7);
+  padding: 20px 50px;
+  font-size: 42px;
+  font-weight: bold;
+  border-radius: 12px;
+  color: #fff;
+  display: none;
+   z-index: 2500;
+}
+  
+#footer {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 14px;
+  color: rgba(0,0,0,0.6);
+  font-family: Arial, sans-serif;
+  z-index: 4000;
+  pointer-events: none;
+  text-shadow: 0 0 4px #000;
+  font-weight: 600;
+}
+
+#rules-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  display: none;
+  z-index: 5000;
+}
+
+#rules-popup {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 640px;
+  max-width: 95vw;
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 0 40px rgba(0,157,255,0.6);
+}
+
+#rules-popup iframe {
+  width: 100%;
+  height: 400px; /* wird gleich automatisch angepasst */
+  border: none;
+}
+
+#rules-close {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  background: none;
+  border: none;
+  color: #6bd4ff;
+  font-size: 22px;
+  cursor: pointer;
+  z-index: 10;
+}
+
+#rules-btn {
+  position: absolute;
+  top: 105px;
+  left: 10px;
+  padding: 6px 14px;
+  font-size: 14px;
+  font-weight: bold;
+  border-radius: 6px;
+  border: none;
+  background: rgba(0,0,0,0.6);
+  color: #6bd4ff;
+  cursor: pointer;
+  z-index: 3000;
+}
+
+#rules-btn:hover {
+  background: rgba(0,0,0,0.8);
+}
+</style>
+</head>
+<body>
+
+<div id="caught-alert">CAUGHT!</div>
+<div id="timer-box">Time left: --:--</div>
+<div id="distance-box">Distance: -- m</div>
+<button id="rules-btn">Rules</button>
+<div id="rules-overlay">
+  <div id="rules-popup">
+    <button id="rules-close">✕</button>
+    <iframe src="rules.php"></iframe>
+  </div>
+</div>
+<div id="paused-overlay">GAME PAUSED</div>
+<div id="map"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@rtirl/api@latest/lib/index.min.js"></script>
+<script>
+function getParam(name, defaultValue) {
+  const url = new URL(window.location.href);
+  return url.searchParams.get(name) ?? defaultValue;
+}
+
+const smartZoom = getParam("smartZoom", "false") === "true";
+const miniMapMode = getParam("miniMap", "false") === "true";
+const showDistance = getParam("showDistance", "true") !== "false";
+const autoCamera =
+  getParam("autoCamera", "false") === "true" ||
+  smartZoom ||
+  miniMapMode;
+
+let config;
+let map;
+let geoFenceCircle = null;
+let runnerMarker, hunterMarker;
+let runnerPos = null;
+let hunterPos = null;
+let gameStatus = "running";
+let caughtTriggered = false;
+let timerStopped = false;
+let cameraInitialized = false;
+let roundStart = null;
+let roundMinutes = null;
+let runnerPath = [];
+let hunterPath = [];
+let runnerLine, hunterLine;
+
+function isSamePoint(a, b) {
+  return a && b && a.lat === b.lat && a.lng === b.lng;
+}
+
+function pollGameState() {
+  fetch("api.php?action=state&_=" + Date.now())
+    .then(r => r.json())
+    .then(s => {
+  gameStatus = s.status;
+  roundStart = s.round_start ?? null;
+  updateUIForState();
+});
+
+}
+setInterval(pollGameState, 2000);
+pollGameState();
+
+function updateUIForState() {
+  const pauseOverlay = document.getElementById("paused-overlay");
+  const distBox = document.getElementById("distance-box");
+  const caught = document.getElementById("caught-alert");
+
+  if (gameStatus === "paused") {
+    pauseOverlay.style.display = "block";
+    distBox.style.display = "none";
+    caught.style.display = "none";
+    caughtTriggered = false;
+	timerStopped = false;
+	cameraInitialized = false;
+    if (runnerMarker) runnerMarker.setMap(null);
+    if (hunterMarker) hunterMarker.setMap(null);
+    if (geoFenceCircle) geoFenceCircle.setMap(null);
+	// 🔄 Routen zurücksetzen + ausblenden
+runnerPath = [];
+hunterPath = [];
+
+if (runnerLine) {
+  runnerLine.setPath([]);
+  runnerLine.setMap(null);
+}
+if (hunterLine) {
+  hunterLine.setPath([]);
+  hunterLine.setMap(null);
+}
+
+    } else {
+    pauseOverlay.style.display = "none";
+    distBox.style.display = showDistance ? "block" : "none";
+
+    if (runnerMarker) runnerMarker.setMap(map);
+    if (hunterMarker) hunterMarker.setMap(map);
+    if (geoFenceCircle) geoFenceCircle.setMap(map);
+
+    // 🔁 Linien beim Resume wieder einblenden
+    if (runnerLine) runnerLine.setMap(map);
+    if (hunterLine) hunterLine.setMap(map);
+  }
+
+}
+
+function loadConfig() {
+  return fetch("api.php?action=config")
+    .then(r => r.json());
+}
+
+function addDarkStyles() {
+  map.setOptions({
+    styles: [
+      { stylers: [{ saturation: -100 }, { lightness: -30 }] },
+      { featureType: "road", elementType: "geometry", stylers: [{ lightness: -70 }] },
+      { elementType: "labels", stylers: [{ visibility: "off" }] }
+    ]
+  });
+}
+
+function initOverlay() {
+  loadConfig().then(cfg => {
+    config = cfg;
+	roundMinutes = cfg.round_minutes ?? 60;
+
+    const script = document.createElement("script");
+    script.src =
+      "https://maps.googleapis.com/maps/api/js?key=" +
+      cfg.google_maps_key +
+      "&callback=initMap";
+    script.async = true;
+    document.head.appendChild(script);
+  });
+}
+
+
+function initMap() {
+  const disableUI = getParam("disableUI", "false") === "true";
+  const scrollOff = getParam("scrollWheel", "true") === "false";
+
+  map = new google.maps.Map(document.getElementById("map"), {
+  zoom: config.zoom,
+  center: { lat: config.lat, lng: config.lng },
+  disableDefaultUI: disableUI,
+  zoomControl: !disableUI,
+  streetViewControl: false,
+  scrollwheel: !scrollOff,
+  draggable: !scrollOff,
+  mapTypeControl: !disableUI,
+  mapTypeControlOptions: {
+    position: google.maps.ControlPosition.RIGHT_TOP
+  },
+  fullscreenControl: !disableUI,
+  fullscreenControlOptions: {
+    position: google.maps.ControlPosition.RIGHT_TOP
+  }
+});
+
+
+  addDarkStyles();
+  initMarkers();
+   // 🔴 Runner-Route
+  runnerLine = new google.maps.Polyline({
+    map,
+    path: [],
+    strokeColor: "#FF0000",
+    strokeOpacity: 0.9,
+    strokeWeight: 3
+  });
+
+hunterLine = new google.maps.Polyline({
+  map,
+  path: [],
+  strokeColor: "#00FF00",
+  strokeOpacity: 0.9,
+  strokeWeight: 3
+});
+
+// 🔁 Bestehende Routen vom Server laden
+fetch("api.php?action=routes")
+  .then(r => r.json())
+  .then(data => {
+    if (data.runner && Array.isArray(data.runner)) {
+      runnerPath = data.runner;
+      runnerLine.setPath(runnerPath);
+    }
+    if (data.hunter && Array.isArray(data.hunter)) {
+      hunterPath = data.hunter;
+      hunterLine.setPath(hunterPath);
+    }
+  });
+
+drawGeoFence();
+
+
+  if (config.runner_fixed_position) {
+  runnerPos = { lat: config.lat, lng: config.lng };
+  runnerMarker.setPosition(runnerPos);
+
+  // 🔴 Startpunkt für Route setzen
+if (!isSamePoint(runnerPath.at(-1), runnerPos)) {
+  runnerPath.push(runnerPos);
+  runnerLine.setPath(runnerPath);
+  fetch(`api.php?action=add_route&type=runner&lat=${runnerPos.lat}&lng=${runnerPos.lng}`);
+}
+
+}
+
+  trackPlayers();
+}
+
+function initMarkers() {
+  hunterMarker = new google.maps.Marker({
+    map,
+    icon: {
+      path: google.maps.SymbolPath.CIRCLE,
+      scale: 6,
+      fillColor: "#00FF00",
+      fillOpacity: 1,
+      strokeWeight: 1
+    }
+  });
+
+  runnerMarker = new google.maps.Marker({
+    map,
+    icon: {
+      path: "M -10,0 L 10,0 M 0,-10 L 0,10 M -8,0 A 8 8 0 1 0 8,0 A 8 8 0 1 0 -8,0",
+      strokeColor: "#FF0000",
+      strokeOpacity: 1,
+      strokeWeight: 2.5,
+      scale: 1.3,
+      anchor: new google.maps.Point(0, 0)
+    }
+  });
+}
+
+function drawGeoFence() {
+  if (!config.geo_fence_enabled) {
+    if (geoFenceCircle) {
+      geoFenceCircle.setMap(null);
+      geoFenceCircle = null;
+    }
+    return;
+  }
+
+  const center = { lat: config.lat, lng: config.lng };
+  const radiusMeters = config.radius * 1000;
+
+  if (geoFenceCircle) geoFenceCircle.setMap(null);
+
+  geoFenceCircle = new google.maps.Circle({
+    strokeColor: "#00FF00",
+    strokeOpacity: 0.8,
+    strokeWeight: 2,
+    fillColor: "#00FF00",
+    fillOpacity: 0.08,
+    map: map,
+    center: center,
+    radius: radiusMeters
+  });
+}
+
+
+function distanceMeters(a, b) {
+  const R = 6371000;
+  const toRad = d => d*Math.PI/180;
+  const dLat = toRad(b.lat-a.lat);
+  const dLng = toRad(b.lng-a.lng);
+  const c = Math.sin(dLat/2)**2 +
+        Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat)) *
+        Math.sin(dLng/2)**2;
+  return R * (2 * Math.atan2(Math.sqrt(c), Math.sqrt(1-c)));
+}
+
+async function getWalkingDistance(a, b) {
+  try {
+    const url = "https://maps.googleapis.com/maps/api/directions/json?" +
+                "origin=" + a.lat + "," + a.lng +
+                "&destination=" + b.lat + "," + b.lng +
+                "&mode=walking&key=" + GOOGLE_MAPS_KEY;
+
+    const r = await fetch(url);
+    const j = await r.json();
+
+    if (j.routes && j.routes.length > 0) {
+      return j.routes[0].legs[0].distance.value;
+    }
+
+  } catch(e) {}
+
+  return distanceMeters(a, b);
+}
+
+function updateMarkerSize() {
+  if (!map || !hunterMarker || !runnerMarker) return;
+  const zoom = map.getZoom();
+
+  let hunterScale = 6 + (zoom - 14) * 0.8;
+  let runnerScale = 1.3 + (zoom - 14) * 0.1;
+
+  hunterScale = Math.min(Math.max(hunterScale, 6), 12);
+  runnerScale = Math.min(Math.max(runnerScale, 1.3), 2.5);
+
+  if (zoom < 14) {
+    hunterScale = 6;
+    runnerScale = 1.3;
+  }
+
+  hunterMarker.setIcon({
+    path: google.maps.SymbolPath.CIRCLE,
+    scale: hunterScale,
+    fillColor: "#00FF00",
+    fillOpacity: 1,
+    strokeWeight: 1
+  });
+
+  runnerMarker.setIcon({
+    path: "M -10,0 L 10,0 M 0,-10 L 0,10 M -8,0 A 8 8 0 1 0 8,0 A 8 8 0 1 0 -8,0",
+    strokeColor: "#FF0000",
+    strokeOpacity: 1,
+    strokeWeight: 2.5,
+    scale: runnerScale,
+    anchor: new google.maps.Point(0, 0)
+  });
+}
+
+function updateCamera() {
+  if (!autoCamera) return; // ✅ HIER
+  if (gameStatus === "paused") return;
+  if (!hunterPos || !runnerPos) return;
+
+  // 🟢 ERSTER FRAME: immer beide sichtbar
+  if (!cameraInitialized) {
+    const bounds = new google.maps.LatLngBounds();
+    bounds.extend(hunterPos);
+    bounds.extend(runnerPos);
+
+    map.fitBounds(bounds, {
+      top: 80,
+      bottom: 80,
+      left: 80,
+      right: 80
+    });
+
+    cameraInitialized = true;
+    updateMarkerSize();
+    return;
+  }
+
+
+
+  // 🗺️ Mini-Map: weit raus, beide immer sichtbar
+  if (miniMapMode) {
+    const bounds = new google.maps.LatLngBounds();
+    bounds.extend(hunterPos);
+    bounds.extend(runnerPos);
+
+    map.fitBounds(bounds, {
+      top: 80,
+      bottom: 80,
+      left: 80,
+      right: 80
+    });
+
+    updateMarkerSize();
+    return;
+  }
+
+  // 🔍 Smart-Zoom: so nah wie möglich, aber beide sichtbar
+  if (smartZoom) {
+    const bounds = new google.maps.LatLngBounds();
+    bounds.extend(hunterPos);
+    bounds.extend(runnerPos);
+
+    map.fitBounds(bounds, {
+      top: 60,
+      bottom: 60,
+      left: 60,
+      right: 60
+    });
+
+    const MAX_ZOOM = 18;
+
+    google.maps.event.addListenerOnce(map, "idle", () => {
+      if (map.getZoom() > MAX_ZOOM) {
+        map.setZoom(MAX_ZOOM);
+      }
+    });
+
+    updateMarkerSize();
+    return;
+  }
+
+  // 🎯 Normale Jagd-Kamera (DEIN ursprüngliches Verhalten)
+  const dist = distanceMeters(runnerPos, hunterPos);
+
+  let zoom;
+  if (dist > 6000) zoom = 13;
+  else if (dist > 3200) zoom = 14.5;
+  else if (dist > 1500) zoom = 16.0;
+  else if (dist > 1000) zoom = 16.5;
+  else zoom = 17.0;
+
+  const center = {
+    lat: (hunterPos.lat + runnerPos.lat) / 2,
+    lng: (hunterPos.lng + runnerPos.lng) / 2
+  };
+
+  map.setCenter(center);
+  map.setZoom(zoom);
+  updateMarkerSize();
+}
+
+
+
+
+let lastDistanceUpdate = 0;
+async function updateDistance() {
+if (!showDistance) return;
+  const now = Date.now();
+  if (now - lastDistanceUpdate < 2000) return;
+  lastDistanceUpdate = now;
+
+  const box = document.getElementById("distance-box");
+  if (!runnerPos || !hunterPos || gameStatus !== "running") {
+    box.style.display = "none";
+    return;
+  }
+
+  const dist = await getWalkingDistance(runnerPos, hunterPos);
+
+  box.textContent = "Distance: " + Math.round(dist) + " m";
+
+  if (dist > 2000) box.style.color = "#00FF00";
+  else if (dist > 800) box.style.color = "#FFD700";
+  else box.style.color = "#FF0000";
+}
+
+function checkCatch(alert) {
+  if (gameStatus !== "running") return;
+  if (!runnerPos || !hunterPos || caughtTriggered) return;
+
+  getWalkingDistance(runnerPos, hunterPos).then(dist => {
+    if (dist <= config.catch_meter) {
+  caughtTriggered = true;
+  timerStopped = true; // ⏱ TIMER STOPPEN
+  alert.style.display = "block";
+  document.getElementById("distance-box").style.display = "none";
+}
+
+  });
+}
+
+function updateTimer() {
+	if (timerStopped) return;
+	const box = document.getElementById("timer-box");
+
+  if (gameStatus !== "running" || !roundStart || !roundMinutes) {
+    box.style.display = "none";
+    return;
+  }
+
+  const total = roundMinutes * 60;
+  const elapsed = Math.floor(Date.now() / 1000) - roundStart;
+  const left = total - elapsed;
+
+  if (left <= 0) {
+    box.textContent = "Time over!";
+    box.style.color = "#FF0000";
+    box.style.display = "block";
+    return;
+  }
+
+  const h = Math.floor(left / 3600);
+  const m = Math.floor((left % 3600) / 60);
+  const s = left % 60;
+
+  box.textContent =
+  `Time left: ${h.toString().padStart(2,"0")}:` +
+  `${m.toString().padStart(2,"0")}:` +
+  `${s.toString().padStart(2,"0")}`;
+
+  box.style.color =
+    left > 120 ? "#00FF00" :
+    left > 30  ? "#FFD700" :
+                 "#FF0000";
+
+  box.style.display = "block";
+}
+
+
+function trackPlayers() {
+  const runnerRT = RealtimeIRL.forStreamer("twitch", config.runner_id);
+  const hunterRT = RealtimeIRL.forStreamer("twitch", config.hunter_id);
+  const alert = document.getElementById("caught-alert");
+
+runnerRT.addLocationListener(l => {
+  if (!config.runner_fixed_position && gameStatus === "running") {
+    const newPos = { lat: l.latitude, lng: l.longitude };
+    runnerMarker.setPosition(newPos);
+
+    if (!isSamePoint(runnerPath.at(-1), newPos)) {
+      runnerPos = newPos;
+      runnerPath.push(newPos);
+      runnerLine.setPath(runnerPath);
+      fetch(`api.php?action=add_route&type=runner&lat=${newPos.lat}&lng=${newPos.lng}`);
+	  // 🔒 Snapshot für Hunter-View speichern (Slot-basiert)
+if (roundStart && config.runner_runtime_minutes && config.position_frequency_minutes) {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const revealAt = roundStart + (config.runner_runtime_minutes * 60);
+
+  if (nowSec >= revealAt) {
+    const intervalSec = config.position_frequency_minutes * 60;
+    const slotIndex = Math.floor((nowSec - revealAt) / intervalSec);
+
+    fetch("api.php?action=save_runner_snapshot", {
+      method: "POST",
+      body: new URLSearchParams({
+        slot: slotIndex,
+        lat: newPos.lat,
+        lng: newPos.lng
+      })
+    });
+  }
+}
+
+    }
+
+    updateCamera();
+  }
+  updateDistance();
+  checkCatch(alert);
+});
+
+
+
+hunterRT.addLocationListener(l => {
+  if (gameStatus === "running") {
+    const newPos = { lat: l.latitude, lng: l.longitude };
+    hunterMarker.setPosition(newPos);
+
+    if (!isSamePoint(hunterPath.at(-1), newPos)) {
+      hunterPos = newPos;
+      hunterPath.push(newPos);
+      hunterLine.setPath(hunterPath);
+      fetch(`api.php?action=add_route&type=hunter&lat=${newPos.lat}&lng=${newPos.lng}`);
+    }
+
+    updateCamera();
+  }
+  updateDistance();
+  checkCatch(alert);
+});
+
+}
+
+const rulesBtn = document.getElementById("rules-btn");
+const rulesOverlay = document.getElementById("rules-overlay");
+const rulesClose = document.getElementById("rules-close");
+
+if (rulesBtn && rulesOverlay && rulesClose) {
+  rulesBtn.addEventListener("click", () => {
+    rulesOverlay.style.display = "block";
+  });
+
+  rulesClose.addEventListener("click", () => {
+    rulesOverlay.style.display = "none";
+  });
+
+  window.addEventListener("message", e => {
+    if (e.origin !== window.location.origin) return;
+    if (e.data?.type === "rulesHeight") {
+      const iframe = document.querySelector("#rules-popup iframe");
+      if (iframe) iframe.style.height = e.data.height + "px";
+    }
+  });
+}
+
+
+initOverlay();
+setInterval(updateTimer, 1000);
+</script>
+
+
+<div id="footer">Made with ❤️ by romestylez</div>
+</body>
+</html>
