@@ -176,6 +176,9 @@ const autoCamera =
   getParam("autoCamera", "false") === "true" ||
   smartZoom ||
   miniMapMode;
+// disableUI blendet zusätzlich die eigenen Overlay-Elemente aus
+// (Rules-Button, Timer, Footer) – nicht nur die Google-Maps-Controls
+const hideChromeUI = getParam("disableUI", "false") === "true";
 
 let config;
 let map;
@@ -602,6 +605,7 @@ function checkCatch(alert) {
 }
 
 function updateTimer() {
+	if (hideChromeUI) return;
 	if (timerStopped) return;
 	const box = document.getElementById("timer-box");
 
@@ -726,6 +730,13 @@ if (rulesBtn && rulesOverlay && rulesClose) {
   });
 }
 
+
+if (hideChromeUI) {
+  ["rules-btn", "timer-box", "footer"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = "none";
+  });
+}
 
 initOverlay();
 setInterval(updateTimer, 1000);
