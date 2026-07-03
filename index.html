@@ -89,6 +89,13 @@
   font-weight: 600;
 }
 
+/* disableUI=true blendet die eigenen Overlay-Elemente aus.
+   CSS statt JS, damit auch der Footer (steht im DOM nach dem Script)
+   zuverlässig getroffen wird; !important überschreibt inline-Styles. */
+html.hide-chrome #rules-btn,
+html.hide-chrome #timer-box,
+html.hide-chrome #footer { display: none !important; }
+
 #rules-overlay {
   position: fixed;
   inset: 0;
@@ -731,12 +738,7 @@ if (rulesBtn && rulesOverlay && rulesClose) {
 }
 
 
-if (hideChromeUI) {
-  ["rules-btn", "timer-box", "footer"].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.style.display = "none";
-  });
-}
+if (hideChromeUI) document.documentElement.classList.add("hide-chrome");
 
 initOverlay();
 setInterval(updateTimer, 1000);
